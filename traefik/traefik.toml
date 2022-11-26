@@ -1,0 +1,26 @@
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+  [entryPoints.web.http.redirections.entryPoint]
+    to = "websecure"
+    scheme = "https"
+
+  [entryPoints.websecure]
+    address = ":443"
+
+[certificatesResolvers.myresolver.acme]
+  email = "EMAIL"
+  storage = "acme.json"
+  [certificatesResolvers.myresolver.acme.httpChallenge]
+    entryPoint = "web"
+
+[docker]
+domain = "DNS_NAME"
+watch = true
+network = "NETWORK_NAME"
+
+[api]
+  insecure=true
+
+[providers.docker]
+  exposedByDefault = false

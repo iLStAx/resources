@@ -1,0 +1,25 @@
+---
+Github Action to deploy a docker container with docker compose
+via ssh
+---
+name: CI/CD
+on:
+  push:
+    branches:
+      - master
+jobs:
+  develop:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: connect via ssh
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.KEY }}
+          passphrase: ${{ secrets.PASSPHRASE }}
+          script: |
+            cd PATH_TO_PROYECT
+            git pull origin master
+            docker-compose -f PATH_TO_DOCKERCOMPOSE_YML restart rails

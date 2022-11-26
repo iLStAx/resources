@@ -1,0 +1,58 @@
+version: '3.5'
+services:
+  burnout:
+    container_name: CONTAINER_NAME
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    volumes:
+      - .:/app
+      - server_node_modules:/app/node_modules
+      - client_node_modules:/app/client/node_modules
+    expose:
+      - 3000
+      - 5000
+    ports:
+      - 3000:3000
+      - 5000:5000
+    depends_on:
+      - faktory
+      - elastic
+    networks:
+      - elasticNet
+
+  elastic:
+    container_name: CONTAINER_NAME_ELASTIC
+    image: elasticsearch:7.16.3
+    volumes:
+      - elasticVol:/usr/share/elasticsearch/data
+    environment:
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - discovery.type=single-node
+    ports:
+      - 9200:9200
+      - 9300:9300
+    networks:
+      - elasticNet
+
+  faktory:
+    image: contribsys/faktory:latest
+    volumes:
+      - faktoryVol:/var/lib/faktory
+    ports:
+      - 7419:7419
+      - 7420:7420
+    networks:
+      - elasticNet
+
+volumes:
+  elasticVol:
+  faktoryVol:
+  server_node_modules:
+  client_node_modules:
+
+networks:
+  elasticNet:
+    name: NETWORK_NAME

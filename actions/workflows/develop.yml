@@ -1,0 +1,184 @@
+---
+Github Action to build a docker image then create a task definition
+and finally deploy to a many ECS services on AWS. Also
+after all jobs passed send a notification to some slack channel
+---
+name: Push Docker image to ECR
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [14.x]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Version de Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci
+      - run: npm run build --if-present
+      - run: npm test
+  build:
+    needs: test
+    name: Build Image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          mask-aws-account-id: no
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Build, tag, and push the image to Amazon ECR
+        id: build-image
+        env:
+          NAME: ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPO_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Build a docker container"
+          docker build -t $NAME:$IMAGE_TAG .
+          # echo "Tag a docker container"
+          # docker tag $NAME:$IMAGE_TAG $NAME:latest
+          echo "Pushing image to ECR..."
+          docker push $NAME:$IMAGE_TAG
+          echo "::set-output name=image::$(echo -n $NAME:$IMAGE_TAG | base64)"
+  create-task:
+    needs: build
+    name: Create new task definition
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition --task-definition TASK_DEFINITION_NAME --query taskDefinition > task-definition.json
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ secrets.CONTAINER_NAME }}
+          image: ${{needs.build.outputs.image}} | base64 --decode
+      - name: Upload task definition
+        uses: actions/upload-artifact@v3
+        with:
+          name: task-definition
+          path: task-definition.json
+  deploy-backend-service:
+    needs: create-task
+    name: Deploy Amazon ECS task definition Backend Service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Download task definition artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: task-definition
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          service: ${{ secrets.ECS_SERVICE }}
+          cluster: ${{ secrets.ECS_CLUSTER }}
+          wait-for-service-stability: true
+  deploy-slack-service:
+    needs: create-task
+    name: Deploy Amazon ECS task definition Slack Service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Download task definition artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: task-definition
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          service: ${{ secrets.ECS_SLACK_SERVICE }}
+          cluster: ${{ secrets.ECS_CLUSTER }}
+          wait-for-service-stability: true
+  deploy-teams-service:
+    needs: create-task
+    name: Deploy Amazon ECS task definition Teams Service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Download task definition artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: task-definition
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          service: ${{ secrets.ECS_TEAMS_SERVICE }}
+          cluster: ${{ secrets.ECS_CLUSTER }}
+          wait-for-service-stability: true
+  slackNotification:
+    name: Slack Notification
+    needs: [deploy-backend-service, deploy-slack-service, deploy-teams-service]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Slack Notification
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_ICON: URL_TO_SOME_ICON
+          SLACK_MESSAGE: ${{ github.actor }} deploy a new version of back-develop
+          SLACK_TITLE: Deploy Back Development
+          SLACK_USERNAME: Deploy
