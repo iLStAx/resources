@@ -30,8 +30,6 @@ jobs:
     needs: test
     name: Build Image
     runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.build-image.outputs.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -53,11 +51,14 @@ jobs:
         run: |
           echo "Build a docker container"
           docker build -t $NAME:$IMAGE_TAG .
-          # echo "Tag a docker container"
-          # docker tag $NAME:$IMAGE_TAG $NAME:latest
           echo "Pushing image to ECR..."
           docker push $NAME:$IMAGE_TAG
-          echo "::set-output name=image::$(echo -n $NAME:$IMAGE_TAG | base64)"
+          echo $NAME:$IMAGE_TAG > image.txt
+      - name: Upload Image
+        uses: actions/upload-artifact@v3
+        with:
+          name: image
+          path: image.txt
   create-task:
     needs: build
     name: Create new task definition
@@ -65,6 +66,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+      - name: Download image artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: image
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
@@ -75,7 +80,10 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
       - name: Download task definition
+        id: download-task
         run: |
+          value=`cat image.txt`
+          echo "image=$value" >> $GITHUB_OUTPUT
           aws ecs describe-task-definition --task-definition TASK_DEFINITION_NAME --query taskDefinition > task-definition.json
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
@@ -83,12 +91,16 @@ jobs:
         with:
           task-definition: task-definition.json
           container-name: ${{ secrets.CONTAINER_NAME }}
-          image: ${{needs.build.outputs.image}} | base64 --decode
+          image: ${{ steps.download-task.outputs.image }}
+      - name: Replace task definition json
+        run: |
+          value=`cat ${{ steps.task-def.outputs.task-definition }}`
+          echo $value > task-definition-v2.json
       - name: Upload task definition
         uses: actions/upload-artifact@v3
         with:
           name: task-definition
-          path: task-definition.json
+          path: task-definition-v2.json
   deploy-backend-service:
     needs: create-task
     name: Deploy Amazon ECS task definition Backend Service
