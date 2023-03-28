@@ -1,0 +1,51 @@
+name: Upload to Develop S3
+
+on:
+  push:
+    branches:
+      - develop
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+    steps:
+        - uses: actions/checkout@v1
+
+        - name: Install dependencies
+          run: npm install
+
+        - name: Building App
+          env:
+            REACT_APP_SENTRY_DSN: ${{ secrets.REACT_APP_SENTRY_DSN }}
+            REACT_APP_REQUEST_BASE_URL: ${{ secrets.REACT_APP_REQUEST_BASE_URL }}
+            SKIP_PREFLIGHT_CHECK:  ${{ secrets.SKIP_PREFLIGHT_CHECK }}
+            REACT_APP_MICROSOFT_CLIENT_ID: ${{ secrets.REACT_APP_MICROSOFT_CLIENT_ID }}
+            REACT_APP_MICROSOFT_TENANT_ID: ${{ secrets.REACT_APP_MICROSOFT_TENANT_ID }}
+          run: npm run build
+
+        - name: Deploy
+          uses: lbertenasco/s3-deploy@v1
+          with:
+            folder: build
+            bucket: ${{ secrets.AWS_BUCKET }}
+            dist-id: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+            invalidation: / *
+
+  slackNotification:
+    needs: deploy
+    name: Slack Notification
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Slack Notification
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        SLACK_COLOR: ${{ job.status }} # or a specific color like 'good' or '#ff00ff'
+        SLACK_ICON:
+        SLACK_MESSAGE: ${{ github.actor }} deploy a new version of front-develop
+        SLACK_TITLE: Deploy Development Frontend
+        SLACK_USERNAME: Deploy
